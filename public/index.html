@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>貴金属価格スクレイピング</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 24px;
+      color: #1a1a1a;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    #fetchBtn {
+      padding: 10px 28px;
+      font-size: 1rem;
+      background: #c9a227;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #fetchBtn:hover:not(:disabled) { background: #a88320; }
+    #fetchBtn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #ddd;
+      border-top-color: #c9a227;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #status {
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .error { color: #c0392b; font-size: 0.9rem; }
+
+    .result-section { margin-bottom: 12px; }
+
+    .result-section h2 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+      color: #555;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: #2c2c2c;
+      color: #fff;
+      padding: 10px 12px;
+      text-align: center;
+      font-weight: 600;
+    }
+
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #eee;
+      text-align: center;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #fafafa; }
+
+    td:first-child { font-weight: 600; text-align: left; }
+
+    .null-val { color: #bbb; }
+
+    #lastUpdated {
+      margin-top: 12px;
+      font-size: 0.82rem;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>貴金属価格スクレイピング</h1>
+
+    <div class="controls">
+      <button id="fetchBtn">価格を取得</button>
+      <div class="spinner" id="spinner"></div>
+      <span id="status"></span>
+    </div>
+
+    <div id="errorMsg" class="error"></div>
+
+    <div id="resultArea" style="display:none;">
+      <table>
+        <thead>
+          <tr>
+            <th>金属</th>
+            <th>田中（小売）</th>
+            <th>田中（買取）</th>
+            <th>徳力（小売）</th>
+            <th>徳力（買取）</th>
+            <th>マテリアル（小売）</th>
+            <th>マテリアル（買取）</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div id="lastUpdated"></div>
+    </div>
+  </div>
+
+  <script>
+    const METALS = [
+      { key: 'gold',      label: '金' },
+      { key: 'platinum',  label: 'プラチナ' },
+      { key: 'silver',    label: '銀' },
+      { key: 'palladium', label: 'パラジウム' },
+    ];
+
+    const btn       = document.getElementById('fetchBtn');
+    const spinner   = document.getElementById('spinner');
+    const statusEl  = document.getElementById('status');
+    const errorMsg  = document.getElementById('errorMsg');
+    const resultArea = document.getElementById('resultArea');
+    const tableBody  = document.getElementById('tableBody');
+    const lastUpdated = document.getElementById('lastUpdated');
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      spinner.style.display = 'block';
+      statusEl.textContent = '取得中...';
+      errorMsg.textContent = '';
+      resultArea.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/scrape', { method: 'POST' });
+        const json = await res.json();
+
+        if (!res.ok) throw new Error(json.error ?? 'APIエラー');
+
+        renderTable(json.data);
+        resultArea.style.display = 'block';
+
+        const now = new Date();
+        lastUpdated.textContent = `取得日時: ${formatDatetime(now)}`;
+        statusEl.textContent = '取得完了';
+
+        // 一部サイトが失敗した場合の警告
+        if (json.errors) {
+          const sites = Object.keys(json.errors).join(', ');
+          errorMsg.textContent = `⚠ 一部サイトの取得に失敗しました: ${sites}`;
+        }
+        if (json.sheetsError) {
+          errorMsg.textContent += (errorMsg.textContent ? '  / ' : '') +
+            `⚠ Sheets書き込みエラー: ${json.sheetsError}`;
+        }
+      } catch (err) {
+        statusEl.textContent = '';
+        errorMsg.textContent = `エラー: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        spinner.style.display = 'none';
+      }
+    });
+
+    function renderTable(data) {
+      tableBody.innerHTML = '';
+      for (const { key, label } of METALS) {
+        const t = data.tanaka?.[key]   ?? {};
+        const d = data.tokuriki?.[key] ?? {};
+        const m = data.material?.[key] ?? {};
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${label}</td>
+          <td>${fmt(t.retail)}</td>
+          <td>${fmt(t.buying)}</td>
+          <td>${fmt(d.retail)}</td>
+          <td>${fmt(d.buying)}</td>
+          <td>${fmt(m.retail)}</td>
+          <td>${fmt(m.buying)}</td>
+        `;
+        tableBody.appendChild(tr);
+      }
+    }
+
+    function fmt(val) {
+      if (val == null) return '<span class="null-val">-</span>';
+      return Number(val).toLocaleString('ja-JP');
+    }
+
+    function formatDatetime(date) {
+      const y  = date.getFullYear();
+      const mo = String(date.getMonth() + 1).padStart(2, '0');
+      const d  = String(date.getDate()).padStart(2, '0');
+      const h  = String(date.getHours()).padStart(2, '0');
+      const mi = String(date.getMinutes()).padStart(2, '0');
+      return `${y}/${mo}/${d} ${h}:${mi}`;
+    }
+  </script>
+</body>
+</html>
