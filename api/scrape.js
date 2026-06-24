@@ -1,7 +1,7 @@
 const { scrapeTanaka }   = require('../lib/scrapers/tanaka');
 const { scrapeTokuriki } = require('../lib/scrapers/tokuriki');
 const { scrapeMaterial } = require('../lib/scrapers/material');
-// const { updateCurrentSheet, appendHistorySheet } = require('../lib/sheets');
+const { updateCurrentSheet, appendHistorySheet } = require('../lib/sheets');
 
 module.exports = async function handler(req, res) {
   // CORSヘッダー（ローカル開発用）
@@ -34,19 +34,23 @@ module.exports = async function handler(req, res) {
   if (tokurikiResult.status === 'rejected') errors.tokuriki = tokurikiResult.reason?.message;
   if (materialResult.status === 'rejected') errors.material = materialResult.reason?.message;
 
-  // TODO: スクレイピング結果確認後に有効化
-  // try {
-  //   await Promise.all([
-  //     updateCurrentSheet(tanaka, tokuriki, material),
-  //     appendHistorySheet(tanaka, tokuriki, material),
-  //   ]);
-  // } catch (err) {
-  //   console.error('Sheets書き込みエラー:', err);
-  // }
+  const spreadsheetId = req.body?.spreadsheetId;
+
+  let sheetsError;
+  try {
+    await Promise.all([
+      updateCurrentSheet(tanaka, tokuriki, material, spreadsheetId),
+      appendHistorySheet(tanaka, tokuriki, material, spreadsheetId),
+    ]);
+  } catch (err) {
+    console.error('Sheets書き込みエラー:', err);
+    sheetsError = err.message;
+  }
 
   return res.status(200).json({
     success: true,
     data: { tanaka, tokuriki, material },
     errors: Object.keys(errors).length > 0 ? errors : undefined,
+    sheetsError,
   });
 };

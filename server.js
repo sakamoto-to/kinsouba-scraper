@@ -4,7 +4,23 @@ const http = require('http');
 const fs   = require('fs');
 const path = require('path');
 
-const handler = require('./api/scrape');
+const API_ROUTES = {
+  '/api/scrape': require('./api/scrape'),
+  '/api/setup':  require('./api/setup'),
+};
+
+// POST ボディを JSON としてパースして req.body に格納
+function parseBody(req) {
+  return new Promise((resolve) => {
+    if (req.method !== 'POST') return resolve({});
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(raw)); }
+      catch { resolve({}); }
+    });
+  });
+}
 
 // Vercel の res.status().json() を Node.js 標準の res に追加するシム
 function addCompatibility(res) {
@@ -34,7 +50,15 @@ const server = http.createServer(async (req, res) => {
 
   // API リクエスト
   if (req.url.startsWith('/api/')) {
+    const handler = API_ROUTES[req.url.split('?')[0]];
+    if (!handler) {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Not Found' }));
+      return;
+    }
     try {
+      req.body = await parseBody(req);
       await handler(req, res);
     } catch (err) {
       res.statusCode = 500;
